@@ -13,7 +13,7 @@ const windows = process.platform === "win32";
 const createTestRepo = (repoDefaultConfig?: Partial<ActionConfig>) => {
     const repoDirectory = path.join(os.tmpdir(), `test${Math.random().toString(36).substring(2, 15)}`);
     cp.execSync(`mkdir ${repoDirectory}`);
-    cp.execSync(`git init ${repoDirectory}`);
+    cp.execSync(`git init --initial-branch=master ${repoDirectory}`);
 
     const run = (command: string) => {
         return execute(repoDirectory, command);
@@ -95,6 +95,19 @@ test('Tagging does not break version', async () => {
     const result = await repo.runAction();
 
     expect(result.formattedVersion).toBe('0.0.1+2');
+}, 15000);
+
+
+test('Tagging does not break version from previous tag', async () => {
+    const repo = createTestRepo(); // 0.0.0+0
+
+    repo.makeCommit('Initial Commit'); // 0.0.1+0
+    repo.exec('git tag v0.0.1')
+    repo.makeCommit(`Second Commit`); // 0.0.2+0
+    repo.makeCommit(`Third Commit`); // 0.0.2+1
+    repo.exec('git tag v0.0.2')
+    const result = await repo.runAction();
+    expect(result.formattedVersion).toBe('0.0.2+1');
 }, 15000);
 
 test('Minor update bumps minor version and resets increment', async () => {
@@ -354,6 +367,22 @@ test('Namespace is tracked separately', async () => {
     expect(subprojectResult.formattedVersion).toBe('0.1.1+0');
 }, 15000);
 
+test('Namespace allows dashes', async () => {
+    const repo = createTestRepo({ tagPrefix: '' }); // 0.0.0
+
+    repo.makeCommit('Initial Commit'); // 0.0.1
+    repo.exec('git tag 0.0.1');
+    repo.makeCommit('Second Commit'); // 0.0.2
+    repo.exec('git tag "0.1.0-sub/project"');
+    repo.makeCommit('Third Commit'); // 0.0.2 / 0.1.1
+
+    const result = await repo.runAction();
+    const subprojectResult = await repo.runAction({ namespace: "sub/project" });
+
+    expect(result.formattedVersion).toBe('0.0.2+1');
+    expect(subprojectResult.formattedVersion).toBe('0.1.1+0');
+}, 15000);
+
 test('Commits outside of path are not counted', async () => {
     const repo = createTestRepo({ tagPrefix: '' }); // 0.0.0
 
@@ -396,7 +425,7 @@ test('Current tag is used', async () => {
 }, 15000);
 
 test('Bump each commit works', async () => {
-    
+
     const repo = createTestRepo({ tagPrefix: '', bumpEachCommit: true }); // 0.0.0
 
     expect((await repo.runAction()).formattedVersion).toBe('0.0.0+0');
@@ -450,6 +479,22 @@ test('Regular expressions can be used as major tag', async () => {
 
 test('Regular expressions can be used as minor tag', async () => {
     const repo = createTestRepo({ tagPrefix: '', minorPattern: '/S[a-z]+Value/' }); // 0.0.1
+
+    repo.makeCommit('Initial Commit'); // 0.0.1+0
+    repo.makeCommit('Second Commit SomeValue'); // 0.0.1+1
+    expect((await repo.runAction()).formattedVersion).toBe('0.1.0+0');
+}, 15000);
+
+test('Regular expressions and flags can be used as major tag', async () => {
+    const repo = createTestRepo({ tagPrefix: '', majorPattern: '/s[a-z]+value/', majorFlags: 'i' }); // 0.0.1
+
+    repo.makeCommit('Initial Commit'); // 0.0.1+0
+    repo.makeCommit('Second Commit SomeValue'); // 1.0.0+0
+    expect((await repo.runAction()).formattedVersion).toBe('1.0.0+0');
+}, 15000);
+
+test('Regular expressions and flags can be used as minor tag', async () => {
+    const repo = createTestRepo({ tagPrefix: '', minorPattern: '/s[a-z]+value/', minorFlags: 'i' }); // 0.0.1
 
     repo.makeCommit('Initial Commit'); // 0.0.1+0
     repo.makeCommit('Second Commit SomeValue'); // 0.0.1+1
@@ -579,4 +624,246 @@ test('Can use branches instead of tags', async () => {
     const result = await repo.runAction();
 
     expect(result.versionTag).toBe('release/1.0.1');
+}, 15000);
+
+test('Correct previous version is returned', async () => {
+    const repo = createTestRepo();
+
+    repo.makeCommit('Initial Commit');
+    repo.exec('git tag v2.0.1')
+    repo.makeCommit(`Second Commit`);
+    repo.makeCommit(`Third Commit`);
+    const result = await repo.runAction();
+
+    expect(result.formattedVersion).toBe('2.0.2+1');
+    expect(result.previousVersion).toBe('2.0.1');
+}, 15000);
+
+test('Correct previous version is returned when using branches', async () => {
+    const repo = createTestRepo({ tagPrefix: 'release/', useBranches: true });
+
+    repo.makeCommit('Initial Commit');
+    repo.exec('git checkout -b release/2.0.1');
+    repo.makeCommit(`Second Commit`);
+    repo.exec('git checkout master');
+    repo.exec('git merge release/2.0.1');
+    repo.makeCommit(`Third Commit`);
+    const result = await repo.runAction();
+
+    expect(result.previousVersion).toBe('2.0.1');
+    expect(result.formattedVersion).toBe('2.0.2+0');
+}, 15000);
+
+test('Correct previous version is returned when directly tagged', async () => {
+    const repo = createTestRepo();
+
+    repo.makeCommit('Initial Commit');
+    repo.exec('git tag v2.0.1')
+    repo.makeCommit(`Second Commit`);
+    repo.makeCommit(`Third Commit`);
+    repo.exec('git tag v2.0.2')
+    const result = await repo.runAction();
+
+    expect(result.previousVersion).toBe('2.0.1');
+    expect(result.formattedVersion).toBe('2.0.2+1');
+}, 15000);
+
+test('Prerelease suffixes are ignored', async () => {
+    const repo = createTestRepo();
+
+    repo.makeCommit('Initial Commit (MAJOR)');
+    repo.makeCommit(`Second Commit`);
+    repo.exec('git tag v1.0.0-alpha.1')
+    repo.makeCommit(`Third Commit`);
+    const result = await repo.runAction();
+
+    expect(result.formattedVersion).toBe('1.0.0+2');
+}, 15000);
+
+test('Prerelease suffixes are ignored when namespaces are set', async () => {
+    const repo = createTestRepo({ namespace: 'test' });
+
+    repo.makeCommit('Initial Commit (MAJOR)');
+    repo.exec('git tag v1.0.0-test')
+    repo.makeCommit(`Second Commit`);
+    repo.exec('git tag v1.0.1-test-alpha.1')
+    repo.makeCommit(`Third Commit`);
+    const result = await repo.runAction();
+
+    expect(result.formattedVersion).toBe('1.0.1+1');
+}, 15000);
+
+test('Namespace can contains a slash', async () => {
+    const repo = createTestRepo({ tagPrefix: '' }); // 0.0.0
+
+    repo.makeCommit('Initial Commit'); // 0.0.1
+    repo.exec('git tag 0.0.1');
+    repo.makeCommit('Second Commit'); // 0.0.2
+    repo.exec('git tag 0.1.0-sub/project');
+    repo.makeCommit('Third Commit'); // 0.0.2 / 0.1.1
+
+    const result = await repo.runAction();
+    const subprojectResult = await repo.runAction({ namespace: "sub/project" });
+
+    expect(result.formattedVersion).toBe('0.0.2+1');
+    expect(subprojectResult.formattedVersion).toBe('0.1.1+0');
+}, 15000);
+
+test('Namespace can contains a dot', async () => {
+    const repo = createTestRepo({ tagPrefix: '' });
+
+    repo.makeCommit('Initial Commit');
+    repo.exec('git tag 0.0.1');
+    repo.makeCommit('Second Commit');
+    repo.exec('git tag 0.1.0-sub.project');
+    repo.makeCommit('Third Commit');
+    repo.exec('git tag 0.2.0-sub/project');
+    repo.makeCommit('fourth Commit');
+
+    const result = await repo.runAction();
+    const subprojectResult = await repo.runAction({ namespace: "sub.project" });
+
+    expect(result.formattedVersion).toBe('0.0.2+2');
+    expect(subprojectResult.formattedVersion).toBe('0.1.1+1');
+}, 15000);
+
+test('Patch increments only once', async () => {
+    const repo = createTestRepo({ tagPrefix: '', versionFormat: "${major}.${minor}.${patch}" });
+
+    repo.makeCommit('Initial Commit');
+    repo.exec('git tag 0.0.1');
+    const firstResult = await repo.runAction();
+    repo.makeCommit('Second Commit');
+    const secondResult = await repo.runAction();
+    repo.makeCommit('Third Commit');
+    const thirdResult = await repo.runAction();
+    repo.makeCommit('fourth Commit');
+    const fourthResult = await repo.runAction();
+
+
+    expect(firstResult.formattedVersion).toBe('0.0.1');
+    expect(secondResult.formattedVersion).toBe('0.0.2');
+    expect(thirdResult.formattedVersion).toBe('0.0.2');
+    expect(fourthResult.formattedVersion).toBe('0.0.2');
+
+}, 15000);
+
+test('Patch increments each time when bump each commit is set', async () => {
+    const repo = createTestRepo({ tagPrefix: '', versionFormat: "${major}.${minor}.${patch}", bumpEachCommit: true });
+
+    repo.makeCommit('Initial Commit');
+    repo.exec('git tag 0.0.1');
+    const firstResult = await repo.runAction();
+    repo.makeCommit('Second Commit');
+    const secondResult = await repo.runAction();
+    repo.makeCommit('Third Commit');
+    const thirdResult = await repo.runAction();
+    repo.makeCommit('fourth Commit');
+    const fourthResult = await repo.runAction();
+
+
+    expect(firstResult.formattedVersion).toBe('0.0.1');
+    expect(secondResult.formattedVersion).toBe('0.0.2');
+    expect(thirdResult.formattedVersion).toBe('0.0.3');
+    expect(fourthResult.formattedVersion).toBe('0.0.4');
+
+}, 15000);
+
+test('Current commit is provided', async () => {
+    const repo = createTestRepo({ tagPrefix: '', versionFormat: "${major}.${minor}.${patch}" });
+
+    repo.makeCommit('Initial Commit');
+    repo.makeCommit('Second Commit');
+    repo.makeCommit('Third Commit');
+    repo.makeCommit('fourth Commit');
+    repo.exec('git tag 0.0.1');
+    const result = await repo.runAction();
+
+
+    expect(result.currentCommit).toBeTruthy();
+
+}, 15000);
+
+test('Prerelease tags are ignored on current commit', async () => {
+    const repo = createTestRepo({
+        minorPattern: '/.*/'
+    });
+
+    let i = 0;
+
+    const validate = async (version: string, changed: boolean = true) => {
+        const result = await repo.runAction();
+        expect(result.formattedVersion).toBe(version);
+        expect(result.changed).toBe(changed);
+    }
+
+    await validate('0.0.0+0', false);
+    repo.makeCommit(`Commit ${i++}`);
+    await validate('0.1.0+0');
+    repo.exec('git tag v0.0.0');
+    await validate('0.0.0+0', false);
+    repo.makeCommit(`Commit ${i++}`);
+    await validate('0.1.0+0');
+    repo.exec('git tag v1.0.0-rc1');
+    await validate('0.1.0+0');
+    repo.makeCommit(`Commit ${i++}`);
+    await validate('0.1.0+1');
+    repo.exec('git tag v1.0.0-rc2');
+    await validate('0.1.0+1'); 
+    repo.makeCommit(`Commit ${i++}`);
+    await validate('0.1.0+2'); 
+    repo.exec('git tag v1.0.0-rc3');
+    await validate('0.1.0+2'); 
+    repo.makeCommit(`Commit ${i++}`);
+    await validate('0.1.0+3');
+    repo.exec('git tag v1.0.0');
+    await validate('1.0.0+0', false);
+    repo.makeCommit(`Commit ${i++}`);
+    await validate('1.1.0+0');
+    repo.exec('git tag v1.1.0-rc2');
+    await validate('1.1.0+0');
+    repo.makeCommit(`Commit ${i++}`);
+    await validate('1.1.0+1');
+    repo.exec('git tag v1.1.0-rc4');
+    await validate('1.1.0+1');
+    repo.makeCommit(`Commit ${i++}`);
+    await validate('1.1.0+2');
+    repo.exec('git tag v1.1.0-rc8');
+    await validate('1.1.0+2');
+    repo.makeCommit(`Commit ${i++}`);
+    await validate('1.1.0+3');
+    repo.exec('git tag v1.1.0-rc9');
+    await validate('1.1.0+3');
+    repo.makeCommit(`Commit ${i++}`);
+    await validate('1.1.0+4');
+}, 15000);
+
+test('Pre-release mode does not update major version if major version is 0', async () => {
+    const repo = createTestRepo({ tagPrefix: '', versionFormat: "${major}.${minor}.${patch}", enablePrereleaseMode: true });
+
+    repo.makeCommit('Initial Commit');
+    expect(( await repo.runAction()).formattedVersion).toBe('0.0.1');
+    repo.makeCommit('Second Commit (MINOR)');
+    expect(( await repo.runAction()).formattedVersion).toBe('0.0.1');
+    repo.makeCommit('Third Commit (MAJOR)');
+    expect(( await repo.runAction()).formattedVersion).toBe('0.1.0');
+    repo.exec('git tag 0.1.0');
+    repo.makeCommit('Fourth Commit (MAJOR)');
+    expect(( await repo.runAction()).formattedVersion).toBe('0.2.0');
+}, 15000);
+
+test('Pre-release mode updates major version if major version is not 0', async () => {
+    const repo = createTestRepo({ tagPrefix: '', versionFormat: "${major}.${minor}.${patch}", enablePrereleaseMode: true });
+
+    repo.makeCommit('Initial Commit');
+    repo.exec('git tag 1.0.0');
+    repo.makeCommit('Second Commit');
+    expect(( await repo.runAction()).formattedVersion).toBe('1.0.1');
+    repo.makeCommit('Third Commit (MINOR)');
+    expect(( await repo.runAction()).formattedVersion).toBe('1.1.0');
+    repo.makeCommit('Fourth Commit (MAJOR)');
+    expect(( await repo.runAction()).formattedVersion).toBe('2.0.0');
+    repo.exec('git tag 2.0.0');
+    repo.makeCommit('Fifth Commit (MAJOR)');
+    expect(( await repo.runAction()).formattedVersion).toBe('3.0.0');
 }, 15000);

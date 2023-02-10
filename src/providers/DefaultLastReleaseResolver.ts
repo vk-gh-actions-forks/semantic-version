@@ -21,6 +21,9 @@ export class DefaultLastReleaseResolver implements LastReleaseResolver {
         let currentTag = (await cmd(
             `git tag --points-at ${current} ${releasePattern}`
         )).trim();
+        
+        currentTag = tagFormatter.IsValid(currentTag) ? currentTag : '';
+
         const [currentMajor, currentMinor, currentPatch] = !!currentTag ? tagFormatter.Parse(currentTag) : [null, null, null];
 
         let tag = '';
@@ -29,12 +32,19 @@ export class DefaultLastReleaseResolver implements LastReleaseResolver {
             if (!!currentTag) {
                 // If we already have the current branch tagged, we are checking for the previous one
                 // so that we will have an accurate increment (assuming the new tag is the expected one)
-                const command = `git for-each-ref --count=2 --sort=-v:*refname --format=%(refname:short) --merged=${current} ${refPrefixPattern}${releasePattern}`;
+                const command = `git for-each-ref --sort=-v:*refname --format=%(refname:short) --merged=${current} ${refPrefixPattern}${releasePattern}`;
                 tag = await cmd(command);
-                tag = tag.split('\n').at(-1) || '';
+                tag = tag
+                    .split('\n')
+                    .reverse()
+                    .find(t => tagFormatter.IsValid(t) && t !== currentTag) || '';
+
             } else {
-                const command = `git for-each-ref --count=1 --sort=-v:*refname --format=%(refname:short) --merged=${current} ${refPrefixPattern}${releasePattern}`;
-                tag = await cmd(command);
+                const command = `git for-each-ref --sort=-v:*refname --format=%(refname:short) --merged=${current} ${refPrefixPattern}${releasePattern}`;
+                let tags = await cmd(command);
+                tag = tags
+                    .split('\n')
+                    .find(t => tagFormatter.IsValid(t)) || '';
             }
 
             tag = tag.trim();
