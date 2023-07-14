@@ -29,7 +29,7 @@
   "homepage": "https://github.com/paulhatch/semantic-version#readme",
   "dependencies": {
     "@actions/core": "^1.10.0",
-    "@actions/exec": "^1.1.1"
+    "@actions/exec": "^1.1.0"
   },
   "devDependencies": {
     "@types/node": "^18.11.9",
