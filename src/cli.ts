@@ -1,17 +1,20 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import { runAction } from "./action";
-import { ConfigurationProvider } from "./ConfigurationProvider";
-import { ActionConfig } from "./ActionConfig";
+import { runAction } from "./action.js";
+import { ConfigurationProvider } from "./ConfigurationProvider.js";
+import { ActionConfig } from "./ActionConfig.js";
 import * as process from "process";
+import { createRequire } from "module";
+
+const require = createRequire(import.meta.url);
 
 const program = new Command();
 
 program
   .name("semantic-version")
   .description("Automated semantic versioning for Git repositories")
-  .version(process.env.SEMANTIC_VERSION || "0.0.0-dev")
+  .version(require("../package.json").version ?? "0.0.0-dev")
   .option(
     "-B, --branch <branch>",
     "Specific branch to analyze (default: current HEAD)",
